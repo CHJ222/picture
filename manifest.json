@@ -1,0 +1,19 @@
+
+{
+  "name": "魔法绘本制造机",
+  "short_name": "魔法绘本",
+  "description": "为儿童设计的 AI 魔法绘本创作工具",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#FFF9E1",
+  "theme_color": "#FFD93D",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3466/3466244.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -3,8 +3,17 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>魔法绘本制造机</title>
+    
+    <!-- PWA 元标签 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#FFD93D">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3466/3466244.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Varela+Round&display=swap" rel="stylesheet">
     <style>
@@ -12,6 +21,10 @@
             font-family: 'Varela Round', 'ZCOOL KuaiLe', 'Comic Sans MS', cursive, sans-serif;
             overflow-x: hidden;
             background-color: #FFF9E1;
+            /* 禁止手机上的长按弹出菜单和点击高亮 */
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
         }
         .neubrutalism-shadow {
             box-shadow: 6px 6px 0px 0px rgba(0,0,0,1);
@@ -36,6 +49,10 @@
         .animate-float-slow {
             animation: float 6s ease-in-out infinite;
         }
+        /* 针对 iOS 安全区域的适配 */
+        .safe-area-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
     </style>
 <script type="importmap">
 {
@@ -50,6 +67,15 @@
 </head>
 <body class="bg-[#FFF9E1] text-gray-800">
     <div id="root"></div>
-    <script type-"module" src="/index.tsx"></script>
+    <!-- 修复了 type="module" 的拼写错误，并确保 src 指向正确的入口文件 -->
+    <script type="module" src="/index.tsx"></script>
+    <script>
+      // 注册 Service Worker (用于离线支持和 PWA 安装)
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW registration failed:', err));
+        });
+      }
+    </script>
 </body>
 </html>
