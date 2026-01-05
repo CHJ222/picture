@@ -1,8 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 /**
  * 将 Blob 转换为 Base64 字符串
  */
@@ -20,11 +18,11 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
 
 /**
  * 核心逻辑：分析双视频并生成水彩风格绘本
- * 1. 深度分析主角视频提取核心特征（发型、眼镜、衣服颜色细节）。
- * 2. 将故事润色并拆解。
- * 3. 强制要求生成水彩画风格的插画提示词。
  */
 export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Promise<any> => {
+  // 必须在函数内部实例化，以确保在调用时才访问 process.env
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
   const heroBase64 = await blobToBase64(heroBlob);
   const storyBase64 = await blobToBase64(storyBlob);
 
@@ -100,6 +98,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
  * 使用 gemini-2.5-flash-image 生成高度匹配且具有水彩质感的图片
  */
 const generateWatercolorIllustration = async (prompt: string): Promise<string> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',

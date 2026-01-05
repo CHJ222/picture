@@ -67,13 +67,13 @@
 </head>
 <body class="bg-[#FFF9E1] text-gray-800">
     <div id="root"></div>
-    <!-- 修复了 type="module" 的拼写错误，并确保 src 指向正确的入口文件 -->
-    <script type="module" src="/index.tsx"></script>
+    <!-- 修复了路径引用，确保 Vite 能够正确处理入口文件 -->
+    <script type="module" src="./index.tsx"></script>
     <script>
       // 注册 Service Worker (用于离线支持和 PWA 安装)
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW registration failed:', err));
+          navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration failed:', err));
         });
       }
     </script>
