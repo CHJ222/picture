@@ -96,7 +96,7 @@ const App: React.FC = () => {
           ref={videoRef} 
           autoPlay 
           muted 
-          playsInline 
+          playsInline // 关键：iOS 必须属性
           className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} 
         />
         
@@ -157,7 +157,13 @@ const App: React.FC = () => {
           {snippets.map(s => (
             <div key={s.id} className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border-2 border-black hover:bg-yellow-50 transition-colors">
               <div className="w-12 h-12 bg-black rounded-lg overflow-hidden cursor-pointer relative group" onClick={() => setPreviewVideo(s.url)}>
-                <video src={s.url} className="w-full h-full object-cover" />
+                {/* 
+                   重要修改：
+                   1. playsInline: 允许在 iOS 上内嵌播放
+                   2. muted: 静音，很多移动浏览器不静音不允许自动加载画面/自动播放
+                   3. object-cover: 填满容器
+                */}
+                <video src={s.url} className="w-full h-full object-cover" playsInline muted />
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 text-white text-[10px]">▶️</div>
               </div>
               <div className="flex-1 text-[10px] font-black">
@@ -174,7 +180,13 @@ const App: React.FC = () => {
 
       {previewVideo && (
         <div className="absolute inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4">
-          <video src={previewVideo} controls autoPlay className="w-full rounded-2xl border-4 border-yellow-400 shadow-[0_0_20px_rgba(255,217,61,0.5)]" />
+          <video 
+            src={previewVideo} 
+            controls 
+            autoPlay 
+            playsInline // 关键：iOS 必须属性
+            className="w-full rounded-2xl border-4 border-yellow-400 shadow-[0_0_20px_rgba(255,217,61,0.5)]" 
+          />
           <Button color="pink" className="mt-8" onClick={() => setPreviewVideo(null)}>关闭预览</Button>
         </div>
       )}

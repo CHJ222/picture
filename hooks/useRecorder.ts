@@ -9,7 +9,7 @@ export const LIMITS = {
 
 export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: number) => void) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [activeRecordMode, setActiveRecordMode] = useState<RecordMode | null>(null); // 新增：记录当前正在录制的模式
+  const [activeRecordMode, setActiveRecordMode] = useState<RecordMode | null>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -20,6 +20,8 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
   const timerRef = useRef<number | null>(null);
   const currentModeRef = useRef<RecordMode | null>(null);
   const startTimeRef = useRef<number>(0);
+  // 新增：用于存储当前录制实际使用的 MIME type
+  const mimeTypeRef = useRef<string>('video/webm');
 
   const stopStream = useCallback(() => {
     if (stream) {
@@ -31,7 +33,6 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
   const initCamera = useCallback(async (mode?: 'user' | 'environment') => {
     try {
       setError(null);
-      // 如果正在运行，先停止旧流
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
@@ -56,7 +57,7 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
   }, [facingMode, stream]);
 
   const toggleCamera = useCallback(async () => {
-    if (isRecording) return; // 录制中不允许翻转以防崩溃
+    if (isRecording) return;
     const newMode = facingMode === 'user' ? 'environment' : 'user';
     await initCamera(newMode);
   }, [facingMode, isRecording, initCamera]);
@@ -65,10 +66,26 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      setActiveRecordMode(null); // 重置录制模式
+      setActiveRecordMode(null);
       if (timerRef.current) clearInterval(timerRef.current);
     }
   }, [isRecording]);
+
+  // 核心修改：检测浏览器支持的最佳 MIME Type
+  const getSupportedMimeType = () => {
+    const types = [
+      'video/mp4',             // Safari 优先
+      'video/webm;codecs=vp9', // Chrome 高质量
+      'video/webm;codecs=vp8', // Chrome 兼容
+      'video/webm'             // 通用后备
+    ];
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        return type;
+      }
+    }
+    return ''; // 让浏览器使用默认值
+  };
 
   const startRecording = useCallback(async (mode: RecordMode) => {
     let currentStream = stream;
@@ -79,49 +96,65 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
     if (!currentStream) return;
 
     currentModeRef.current = mode;
-    setActiveRecordMode(mode); // 设置当前录制模式
+    setActiveRecordMode(mode);
     chunksRef.current = [];
     startTimeRef.current = Date.now();
     
-    const recorder = new MediaRecorder(currentStream);
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-      const duration = Math.round((Date.now() - startTimeRef.current) / 1000);
-      onFinish(blob, mode, duration);
-    };
+    const mimeType = getSupportedMimeType();
+    mimeTypeRef.current = mimeType; // 记录选中的格式
 
-    recorder.start();
-    mediaRecorderRef.current = recorder;
-    setIsRecording(true);
+    // 传入 mimeType 选项
+    const options = mimeType ? { mimeType } : undefined;
     
-    const limit = LIMITS[mode];
-    setTimeLeft(limit);
+    try {
+      const recorder = new MediaRecorder(currentStream, options);
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      
+      recorder.onstop = () => {
+        // 使用记录的 mimeType 创建 Blob，确保 iOS 能识别
+        // 如果 mimeType 为空（默认），则尝试用 recorder.mimeType，最后兜底 video/webm
+        const finalType = mimeTypeRef.current || recorder.mimeType || 'video/webm';
+        const blob = new Blob(chunksRef.current, { type: finalType });
+        const duration = Math.round((Date.now() - startTimeRef.current) / 1000);
+        onFinish(blob, mode, duration);
+      };
 
-    timerRef.current = window.setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          stopRecording();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      
+      const limit = LIMITS[mode];
+      setTimeLeft(limit);
+
+      timerRef.current = window.setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev <= 1) {
+            stopRecording();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (e) {
+      console.error("Failed to create MediaRecorder:", e);
+      alert("无法启动录制，请检查手机兼容性或使用 Chrome 浏览器。");
+      setIsRecording(false);
+      setActiveRecordMode(null);
+    }
   }, [stream, initCamera, onFinish, stopRecording]);
 
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      // 注意：这里不直接调用 stopStream 以免切换页面时出现竞态
     };
   }, []);
 
   return {
     isRecording,
-    activeRecordMode, // 导出此状态供 UI 使用
+    activeRecordMode,
     timeLeft,
     error,
     stream,
