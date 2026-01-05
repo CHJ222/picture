@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Page, VideoSnippet, MagicStory, RecordMode } from './types';
 import { ICONS } from './constants';
 import Button from './components/Button';
@@ -25,7 +25,17 @@ const App: React.FC = () => {
     }]);
   };
 
-  const { isRecording, timeLeft, error, stream, startRecording, stopRecording, initCamera, stopStream } = useRecorder(handleRecordingFinish);
+  const { 
+    isRecording, 
+    timeLeft, 
+    stream, 
+    facingMode,
+    startRecording, 
+    stopRecording, 
+    initCamera, 
+    stopStream,
+    toggleCamera 
+  } = useRecorder(handleRecordingFinish);
 
   useEffect(() => {
     if (videoRef.current && stream) videoRef.current.srcObject = stream;
@@ -79,7 +89,25 @@ const App: React.FC = () => {
       </div>
 
       <div className="relative w-full aspect-[3/4] bg-black rounded-[2.5rem] border-4 border-black overflow-hidden neubrutalism-shadow mb-6">
-        <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover scale-x-[-1]" />
+        {/* 摄像头画面：前置摄像头（user）需要镜像翻转，后置则不需要 */}
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          muted 
+          playsInline 
+          className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} 
+        />
+        
+        {/* 翻转摄像头按钮 */}
+        {!isRecording && (
+          <button 
+            onClick={toggleCamera}
+            className="absolute bottom-4 right-4 w-14 h-14 bg-white rounded-full border-4 border-black flex items-center justify-center text-2xl neubrutalism-shadow-sm bouncy active:scale-90 z-20"
+          >
+            🔄
+          </button>
+        )}
+
         {isRecording && (
           <div className="absolute top-4 left-4 bg-red-500 text-white px-4 py-2 rounded-full border-2 border-black font-black flex items-center gap-2 animate-pulse z-10">
              <div className="w-3 h-3 bg-white rounded-full"></div>

@@ -12,6 +12,7 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
   const [timeLeft, setTimeLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -26,20 +27,38 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
     }
   }, [stream]);
 
-  const initCamera = useCallback(async () => {
+  const initCamera = useCallback(async (mode?: 'user' | 'environment') => {
     try {
       setError(null);
+      // 如果正在运行，先停止旧流
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      
+      const targetMode = mode || facingMode;
       const newStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 1280, height: 720, facingMode: 'user' }, 
+        video: { 
+          width: { ideal: 1280 }, 
+          height: { ideal: 720 }, 
+          facingMode: targetMode 
+        }, 
         audio: true 
       });
       setStream(newStream);
+      setFacingMode(targetMode);
       return newStream;
     } catch (err) {
+      console.error("Camera init error:", err);
       setError('permission_denied');
       return null;
     }
-  }, []);
+  }, [facingMode, stream]);
+
+  const toggleCamera = useCallback(async () => {
+    if (isRecording) return; // 录制中不允许翻转以防崩溃
+    const newMode = facingMode === 'user' ? 'environment' : 'user';
+    await initCamera(newMode);
+  }, [facingMode, isRecording, initCamera]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
@@ -93,18 +112,20 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      stopStream();
+      // 注意：这里不直接调用 stopStream 以免切换页面时出现竞态
     };
-  }, [stopStream]);
+  }, []);
 
   return {
     isRecording,
     timeLeft,
     error,
     stream,
+    facingMode,
     startRecording,
     stopRecording,
     initCamera,
-    stopStream
+    stopStream,
+    toggleCamera
   };
 };
