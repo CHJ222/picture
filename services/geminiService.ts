@@ -20,8 +20,13 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
  * 核心逻辑：分析双视频并生成水彩风格绘本
  */
 export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Promise<any> => {
-  // 必须在函数内部实例化，以确保在调用时才访问 process.env
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  // 安全检查：确保 API Key 已通过 vite.config.ts 注入
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    throw new Error("魔法钥匙丢失了！(请在 Vercel 环境变量中配置 API_KEY)");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
   
   const heroBase64 = await blobToBase64(heroBlob);
   const storyBase64 = await blobToBase64(storyBlob);
@@ -40,8 +45,9 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
 - 核心要求：每一页的 'imagePrompt' 必须首先包含 'character.visualDescription' 中定义的特征，以确保角色一致性。
 - 严禁：不要使用 3D、写实、或者过于鲜艳的矢量图风格。`;
 
+  // 使用 gemini-2.5-flash 替代 gemini-3-pro-preview 以避免配额限制
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-2.5-flash',
     contents: [
       {
         parts: [
@@ -98,7 +104,10 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
  * 使用 gemini-2.5-flash-image 生成高度匹配且具有水彩质感的图片
  */
 const generateWatercolorIllustration = async (prompt: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) return 'https://picsum.photos/600/600?error=no_key';
+
+  const ai = new GoogleGenAI({ apiKey });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',

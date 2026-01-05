@@ -1,5 +1,5 @@
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Page, VideoSnippet, MagicStory, RecordMode } from './types';
 import { ICONS } from './constants';
 import Button from './components/Button';
@@ -33,7 +33,7 @@ const App: React.FC = () => {
     startRecording, 
     stopRecording, 
     initCamera, 
-    stopStream,
+    stopStream, 
     toggleCamera 
   } = useRecorder(handleRecordingFinish);
 
@@ -55,9 +55,10 @@ const App: React.FC = () => {
       setStory(result);
       setCurrentPage(Page.Result);
       stopStream();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("魔法稍微出了点小差错，也许是信号塔被恶龙占领了，再试一次吧！");
+      // 显示具体的错误信息，方便排查
+      alert(`魔法中断了！\n原因：${err.message || '未知错误'}\n\n请检查网络或 API Key 设置。`);
     } finally {
       setIsGenerating(false);
     }
@@ -109,8 +110,8 @@ const App: React.FC = () => {
         )}
 
         {isRecording && (
-          <div className="absolute top-4 left-4 bg-red-500 text-white px-4 py-2 rounded-full border-2 border-black font-black flex items-center gap-2 animate-pulse z-10">
-             <div className="w-3 h-3 bg-white rounded-full"></div>
+          <div className="absolute top-4 left-4 bg-red-100 text-red-500 px-4 py-2 rounded-full border-2 border-black font-black flex items-center gap-2 animate-pulse z-10">
+             <div className="w-3 h-3 bg-red-500 rounded-full"></div>
              REC {timeLeft}s
           </div>
         )}
