@@ -1,0 +1,8 @@
+{
+  "name": "魔法绘本制造机 (Magic Picture Book Maker)",
+  "description": "一个为4-10岁儿童设计的互动式绘本创作工具，结合了视频录制与AI魔法生成。",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
