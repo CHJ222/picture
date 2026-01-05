@@ -17,7 +17,7 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
 };
 
 /**
- * 核心逻辑：分析双视频并生成水彩风格绘本
+ * 核心逻辑：分析双视频并生成漫画风格绘本
  */
 export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Promise<any> => {
   // 安全检查：确保 API Key 已通过 vite.config.ts 注入
@@ -31,26 +31,27 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
   const heroBase64 = await blobToBase64(heroBlob);
   const storyBase64 = await blobToBase64(storyBlob);
 
-  const systemInstruction = `你是一位世界级的儿童绘本主编和视觉导演。
-任务：根据两个视频输入创作一个5页的魔法绘本。
+  // 修改指令：从水彩画改为漫画/动漫风格
+  const systemInstruction = `你是一位世界级的儿童漫画主编和视觉导演。
+任务：根据两个视频输入创作一个5页的精彩漫画绘本。
 
 **输入分析**：
 1. 'hero_video': 主角视频。**核心任务：建立“视觉指纹”**。
    - 请仔细观察主角的：年龄、性别、种族、发型(颜色/长短/卷直)、是否戴眼镜(重要特征)、服装细节(颜色/图案/款式)。
    - **必须**提取这些特征，形成一个高度精确的英文描述标签(Prompt Tags)。
-   - 例如: "cute 6-year-old asian girl, double buns black hair, round red glasses, pink hoodie with cat print, blue jeans".
-2. 'story_video': 故事讲述。提取核心情节，改编成温馨、富有想象力的童话。
+   - 例如: "cute 6-year-old boy, short black spiky hair, wearing square glasses, blue t-shirt with rocket print, yellow shorts".
+2. 'story_video': 故事讲述。提取核心情节，改编成幽默、精彩的漫画脚本。
 
 **输出要求 (JSON)**：
 - 'character.visualDescription': 上述提取的“视觉指纹”英文标签。
 - 'scenes': 5个精彩分镜。
 - 'scenes[].narration': 适合儿童阅读的中文故事文本。
-- 'scenes[].imagePrompt': **必须严格遵循此格式**: "A masterpiece watercolor illustration of [character.visualDescription] [doing specific action]. [Scene environment details]. Soft lighting, dreamy atmosphere, high quality." 
+- 'scenes[].imagePrompt': **必须严格遵循此格式**: "A masterpiece anime illustration of [character.visualDescription] [doing specific action]. [Scene environment details]. Comic book style, vibrant colors, expressive emotion." 
   (注意：必须将 visualDescription 完整填入每个 Prompt 中，确保主角在每一页都长得一样！)
 
 **风格约束**：
-- 艺术风格：Beautiful soft watercolor, hand-painted texture, whimsical, Ghibli-inspired colors.
-- 严禁：Photorealistic, 3D render, dark or scary elements.
+- 艺术风格：Japanese Anime style, cel shading, vibrant colors, clean lines, high quality 2D art.
+- 严禁：Photorealistic, 3D render, sketch, watercolor, monochrome.
 `;
 
   // 使用 gemini-2.5-flash 替代 gemini-3-pro-preview 以避免配额限制
@@ -61,7 +62,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
         parts: [
           { inlineData: { data: heroBase64, mimeType: 'video/webm' } },
           { inlineData: { data: storyBase64, mimeType: 'video/webm' } },
-          { text: "请开始创作！请确保每一页插画里的主角都和 'hero_video' 里的小朋友长得一模一样！" }
+          { text: "请开始创作！请确保每一页漫画里的主角都和 'hero_video' 里的小朋友长得一模一样！" }
         ]
       }
     ],
@@ -100,27 +101,25 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
 
   const storyData = JSON.parse(response.text);
   
-  // 按照分镜逐一生成水彩插画
+  // 按照分镜逐一生成漫画插画
   for (let scene of storyData.scenes) {
-    // 这里的 imagePrompt 已经包含了 visualDescription，所以直接使用即可
-    scene.imageUrl = await generateWatercolorIllustration(scene.imagePrompt);
+    scene.imageUrl = await generateComicIllustration(scene.imagePrompt);
   }
 
   return storyData;
 };
 
 /**
- * 使用 gemini-2.5-flash-image 生成高度匹配且具有水彩质感的图片
+ * 使用 gemini-2.5-flash-image 生成高度匹配且具有漫画质感的图片
  */
-const generateWatercolorIllustration = async (prompt: string): Promise<string> => {
+const generateComicIllustration = async (prompt: string): Promise<string> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) return 'https://picsum.photos/600/600?error=no_key';
 
   const ai = new GoogleGenAI({ apiKey });
   try {
-    // 移除多余的后缀，因为现在 System Instruction 已经要求生成完整的 prompt 了
-    // 但为了保险，还是保留风格后缀
-    const finalPrompt = `${prompt}, masterpiece, best quality, watercolor art style, hand-painted on textured paper, soft edges, whimsical lighting.`;
+    // 漫画/动漫风格 Prompt 后缀
+    const finalPrompt = `${prompt}, masterpiece, best quality, anime style, japanese manga, cel shaded, vibrant colors, clean lines, detailed background.`;
     
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
@@ -138,7 +137,7 @@ const generateWatercolorIllustration = async (prompt: string): Promise<string> =
       }
     }
   } catch (e) {
-    console.error("生成水彩魔法插画失败:", e);
+    console.error("生成漫画魔法插画失败:", e);
   }
   return 'https://picsum.photos/600/600?random=' + Math.random();
 };
