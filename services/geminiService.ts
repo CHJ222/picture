@@ -31,19 +31,27 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
   const heroBase64 = await blobToBase64(heroBlob);
   const storyBase64 = await blobToBase64(storyBlob);
 
-  const systemInstruction = `你是一位顶级儿童水彩绘本艺术家。
-你的任务是处理两个视频输入：
-1. 'hero_video': 介绍主角。请极其详细地提取主角的视觉特征（例如：圆圆的黑框眼镜、粉色有小猫图案的T恤、扎着两个小辫子的黑色短发等）。这些特征是保证绘本“像他/她自己”的关键。
-2. 'story_video': 口述故事。转录并改写为一段优美、简洁、适合4-10岁儿童阅读的童话。
+  const systemInstruction = `你是一位世界级的儿童绘本主编和视觉导演。
+任务：根据两个视频输入创作一个5页的魔法绘本。
 
-生成一个包含 5 个页面的 JSON 绘本：
-- 'character': 包含主角名字和一段极其精炼的视觉特征描述（用于图像生成）。
-- 'scenes': 每一页包含 'narration' (讲故事的文字) 和 'imagePrompt' (插画提示词)。
+**输入分析**：
+1. 'hero_video': 主角视频。**核心任务：建立“视觉指纹”**。
+   - 请仔细观察主角的：年龄、性别、种族、发型(颜色/长短/卷直)、是否戴眼镜(重要特征)、服装细节(颜色/图案/款式)。
+   - **必须**提取这些特征，形成一个高度精确的英文描述标签(Prompt Tags)。
+   - 例如: "cute 6-year-old asian girl, double buns black hair, round red glasses, pink hoodie with cat print, blue jeans".
+2. 'story_video': 故事讲述。提取核心情节，改编成温馨、富有想象力的童话。
 
-**插画风格规范 (必须遵守)**：
-- 风格：Beautiful artistic watercolor painting style, soft brushstrokes, dreamy atmosphere, subtle paper texture.
-- 核心要求：每一页的 'imagePrompt' 必须首先包含 'character.visualDescription' 中定义的特征，以确保角色一致性。
-- 严禁：不要使用 3D、写实、或者过于鲜艳的矢量图风格。`;
+**输出要求 (JSON)**：
+- 'character.visualDescription': 上述提取的“视觉指纹”英文标签。
+- 'scenes': 5个精彩分镜。
+- 'scenes[].narration': 适合儿童阅读的中文故事文本。
+- 'scenes[].imagePrompt': **必须严格遵循此格式**: "A masterpiece watercolor illustration of [character.visualDescription] [doing specific action]. [Scene environment details]. Soft lighting, dreamy atmosphere, high quality." 
+  (注意：必须将 visualDescription 完整填入每个 Prompt 中，确保主角在每一页都长得一样！)
+
+**风格约束**：
+- 艺术风格：Beautiful soft watercolor, hand-painted texture, whimsical, Ghibli-inspired colors.
+- 严禁：Photorealistic, 3D render, dark or scary elements.
+`;
 
   // 使用 gemini-2.5-flash 替代 gemini-3-pro-preview 以避免配额限制
   const response = await ai.models.generateContent({
@@ -53,7 +61,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
         parts: [
           { inlineData: { data: heroBase64, mimeType: 'video/webm' } },
           { inlineData: { data: storyBase64, mimeType: 'video/webm' } },
-          { text: "开始施展魔法！请根据视频里的主角和故事，生成一套精美的水彩风分镜绘本。" }
+          { text: "请开始创作！请确保每一页插画里的主角都和 'hero_video' 里的小朋友长得一模一样！" }
         ]
       }
     ],
@@ -68,7 +76,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
             type: Type.OBJECT,
             properties: {
               name: { type: Type.STRING },
-              visualDescription: { type: Type.STRING, description: "包含发型、眼镜、服饰细节的英文描述" }
+              visualDescription: { type: Type.STRING, description: "从视频提取的精确英文视觉特征标签" }
             },
             required: ["name", "visualDescription"]
           },
@@ -79,7 +87,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
               properties: {
                 pageNumber: { type: Type.NUMBER },
                 narration: { type: Type.STRING },
-                imagePrompt: { type: Type.STRING, description: "结合主角描述的水彩风插画提示词" }
+                imagePrompt: { type: Type.STRING, description: "包含主角视觉特征的完整英文绘画提示词" }
               },
               required: ["pageNumber", "narration", "imagePrompt"]
             }
@@ -94,6 +102,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
   
   // 按照分镜逐一生成水彩插画
   for (let scene of storyData.scenes) {
+    // 这里的 imagePrompt 已经包含了 visualDescription，所以直接使用即可
     scene.imageUrl = await generateWatercolorIllustration(scene.imagePrompt);
   }
 
@@ -109,9 +118,13 @@ const generateWatercolorIllustration = async (prompt: string): Promise<string> =
 
   const ai = new GoogleGenAI({ apiKey });
   try {
+    // 移除多余的后缀，因为现在 System Instruction 已经要求生成完整的 prompt 了
+    // 但为了保险，还是保留风格后缀
+    const finalPrompt = `${prompt}, masterpiece, best quality, watercolor art style, hand-painted on textured paper, soft edges, whimsical lighting.`;
+    
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
-      contents: [{ parts: [{ text: `${prompt}, watercolor art style, hand-painted on textured paper, soft edges, whimsical lighting, high quality illustration for children's book.` }] }],
+      contents: [{ parts: [{ text: finalPrompt }] }],
       config: { 
         imageConfig: { 
           aspectRatio: "1:1" 

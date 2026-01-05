@@ -26,7 +26,8 @@ const App: React.FC = () => {
   };
 
   const { 
-    isRecording, 
+    isRecording,
+    activeRecordMode,
     timeLeft, 
     stream, 
     facingMode,
@@ -75,7 +76,7 @@ const App: React.FC = () => {
           <span className="text-3xl">神奇相机</span>
         </div>
       </Button>
-      <p className="mt-8 text-xl font-bold text-gray-600 animate-pulse">拍下你的脸，变出你的冒险故事</p>
+      <p className="mt-8 text-xl font-bold text-gray-600 animate-pulse">拍出你自己的绘本故事</p>
     </div>
   );
 
@@ -125,16 +126,26 @@ const App: React.FC = () => {
       <div className="grid grid-cols-2 gap-4 mb-6">
         <Card color={snippets.some(s => s.type === 'protagonist') ? 'green' : 'white'} className="p-4 flex flex-col items-center justify-between min-h-[140px] text-center">
           <span className="text-4xl">🦸‍♂️</span>
-          <div className="text-xs font-black">1. 介绍你自己</div>
-          <Button color="pink" size="sm" onClick={() => isRecording ? stopRecording() : startRecording('protagonist')}>
-            {isRecording ? '停止' : '开始'}
+          <div className="text-xs font-black">1. 介绍主角</div>
+          <Button 
+            color="pink" 
+            size="sm" 
+            disabled={isRecording && activeRecordMode !== 'protagonist'}
+            onClick={() => (isRecording && activeRecordMode === 'protagonist') ? stopRecording() : startRecording('protagonist')}
+          >
+            {(isRecording && activeRecordMode === 'protagonist') ? '停止' : '开始'}
           </Button>
         </Card>
         <Card color={snippets.some(s => s.type === 'story') ? 'blue' : 'white'} className="p-4 flex flex-col items-center justify-between min-h-[140px] text-center">
           <span className="text-4xl">📚</span>
           <div className="text-xs font-black">2. 讲精彩故事</div>
-          <Button color="blue" size="sm" onClick={() => isRecording ? stopRecording() : startRecording('story')}>
-            {isRecording ? '停止' : '开始'}
+          <Button 
+            color="blue" 
+            size="sm" 
+            disabled={isRecording && activeRecordMode !== 'story'}
+            onClick={() => (isRecording && activeRecordMode === 'story') ? stopRecording() : startRecording('story')}
+          >
+            {(isRecording && activeRecordMode === 'story') ? '停止' : '开始'}
           </Button>
         </Card>
       </div>

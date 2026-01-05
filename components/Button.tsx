@@ -35,11 +35,10 @@ const Button: React.FC<ButtonProps> = ({
         ${colorMap[color]} 
         ${sizeMap[size]} 
         rounded-3xl border-4 border-[#2D3436] 
-        neubrutalism-shadow bouncy
-        hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]
-        active:translate-x-[6px] active:translate-y-[6px] active:shadow-none
-        transition-all duration-75
+        neubrutalism-shadow 
         flex items-center justify-center gap-3
+        transition-all duration-75
+        ${!props.disabled ? 'bouncy hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[6px] active:translate-y-[6px] active:shadow-none' : 'opacity-50 grayscale cursor-not-allowed'}
         ${className}
       `}
       {...props}

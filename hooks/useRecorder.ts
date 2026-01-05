@@ -9,6 +9,7 @@ export const LIMITS = {
 
 export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: number) => void) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [activeRecordMode, setActiveRecordMode] = useState<RecordMode | null>(null); // 新增：记录当前正在录制的模式
   const [timeLeft, setTimeLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -64,6 +65,7 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      setActiveRecordMode(null); // 重置录制模式
       if (timerRef.current) clearInterval(timerRef.current);
     }
   }, [isRecording]);
@@ -77,6 +79,7 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
     if (!currentStream) return;
 
     currentModeRef.current = mode;
+    setActiveRecordMode(mode); // 设置当前录制模式
     chunksRef.current = [];
     startTimeRef.current = Date.now();
     
@@ -118,6 +121,7 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
 
   return {
     isRecording,
+    activeRecordMode, // 导出此状态供 UI 使用
     timeLeft,
     error,
     stream,
