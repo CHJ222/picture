@@ -1,68 +1,135 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
+import COS from "https://esm.sh/cos-js-sdk-v5";
 
-/**
- * 将 Blob 转换为 Base64 字符串
- */
+const API_BASE = "https://pinstyle-test.imagiclamp.cn/api";
+
+const uploadToTencentCOS = async (imageBlob: Blob): Promise<string> => {
+  const currentOrigin = window.location.origin;
+  const authResponse = await fetch(`${API_BASE}/system/cos/v1/getPreSignedUrlForPost`);
+  const authResult = await authResponse.json();
+  
+  if (authResult.code !== 200 || !authResult.data) {
+    throw new Error("获取 COS 凭据失败");
+  }
+
+  const { tmpSecretId, tmpSecretKey, sessionToken, startTime, expiredTime, bucket, region } = authResult.data;
+  const cos = new COS({
+    getAuthorization: (options, callback) => {
+      callback({
+        TmpSecretId: tmpSecretId,
+        TmpSecretKey: tmpSecretKey,
+        SecurityToken: sessionToken,
+        StartTime: startTime,
+        ExpiredTime: expiredTime,
+      });
+    }
+  });
+
+  const fileName = `magicMaker/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.jpg`;
+  const Region = region || 'ap-nanjing'; 
+
+  return new Promise((resolve, reject) => {
+    cos.putObject({
+      Bucket: bucket, 
+      Region: Region,
+      Key: fileName,
+      Body: imageBlob
+    }, (err, data) => {
+      if (err) reject(new Error("上传图片到云端失败，请检查跨域设置"));
+      else resolve(`https://${bucket}.cos.${Region}.myqcloud.com/${fileName}`);
+    });
+  });
+};
+
 const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = (reader.result as string).split(',')[1];
-      resolve(base64);
-    };
+    reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
 };
 
-/**
- * 核心逻辑：分析双视频并生成漫画风格绘本
- */
-export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Promise<any> => {
-  // 安全检查：确保 API Key 已通过 vite.config.ts 注入
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("魔法钥匙丢失了！(请在 Vercel 环境变量中配置 API_KEY)");
-  }
+const extractFrameAsBlob = (videoBlob: Blob): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.src = URL.createObjectURL(videoBlob);
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadeddata = () => { video.currentTime = 1.0; };
+    video.onseeked = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("抽帧失败"));
+        }, 'image/jpeg', 0.8);
+      }
+      URL.revokeObjectURL(video.src);
+    };
+    video.onerror = (e) => reject(e);
+  });
+};
 
+export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob, preCapturedFace?: Blob): Promise<any> => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) throw new Error("API Key 未配置");
   const ai = new GoogleGenAI({ apiKey });
   
-  const heroBase64 = await blobToBase64(heroBlob);
-  const storyBase64 = await blobToBase64(storyBlob);
+  // 1. 准备主角正脸参考图
+  const heroImageBlob = preCapturedFace || await extractFrameAsBlob(heroBlob);
 
-  // 修改指令：从水彩画改为漫画/动漫风格
-  const systemInstruction = `你是一位世界级的儿童漫画主编和视觉导演。
-任务：根据两个视频输入创作一个5页的精彩漫画绘本。
+  // 2. 并行处理：转码视频 + 上传参考图
+  const [heroBase64, storyBase64, heroReferenceUrl] = await Promise.all([
+    blobToBase64(heroBlob),
+    blobToBase64(storyBlob),
+    uploadToTencentCOS(heroImageBlob)
+  ]);
 
-**输入分析**：
-1. 'hero_video': 主角视频。**核心任务：建立“视觉指纹”**。
-   - 请仔细观察主角的：年龄、性别、种族、发型(颜色/长短/卷直)、是否戴眼镜(重要特征)、服装细节(颜色/图案/款式)。
-   - **必须**提取这些特征，形成一个高度精确的英文描述标签(Prompt Tags)。
-   - 例如: "cute 6-year-old boy, short black spiky hair, wearing square glasses, blue t-shirt with rocket print, yellow shorts".
-2. 'story_video': 故事讲述。提取核心情节，改编成幽默、精彩的漫画脚本。
+  // 获取真实的 MIME 类型，确保 Gemini 能正确解析视频
+  const heroMimeType = heroBlob.type.split(';')[0] || 'video/webm';
+  const storyMimeType = storyBlob.type.split(';')[0] || 'video/webm';
 
-**输出要求 (JSON)**：
-- 'character.visualDescription': 上述提取的“视觉指纹”英文标签。
-- 'scenes': 5个精彩分镜。
-- 'scenes[].narration': 适合儿童阅读的中文故事文本。
-- 'scenes[].imagePrompt': **必须严格遵循此格式**: "A masterpiece anime illustration of [character.visualDescription] [doing specific action]. [Scene environment details]. Comic book style, vibrant colors, expressive emotion." 
-  (注意：必须将 visualDescription 完整填入每个 Prompt 中，确保主角在每一页都长得一样！)
+  // 3. 定义 Gemini 3 的系统指令 (强化主角特征提取 + 漫画风格)
+  const systemInstruction = `你是一位世界级的儿童绘本大师。
+任务：根据 'story_video' (故事讲述) 和 'hero_video' (主角视频)，创作一个 3 页的精彩漫画风格绘本。
 
-**风格约束**：
-- 艺术风格：Japanese Anime style, cel shading, vibrant colors, clean lines, high quality 2D art.
-- 严禁：Photorealistic, 3D render, sketch, watercolor, monochrome.
+**核心任务：确保主角相似度 (Character Consistency)**
+1. **视觉分析**：首先，仔细观察 'hero_video' 中的小朋友。提取所有关键视觉特征：
+   - 种族/肤色 (Ethnicity/Skin tone)
+   - 发型与发色 (Hair style & color)
+   - 服装细节 (Clothing color & type)
+   - 面部特征 (Face shape, glasses, etc.)
+   - 生成一个 **精确的英文人物描述 (Character Prompt)**，例如: "a cute 5-year-old Chinese boy with short black hair and round glasses, wearing a yellow hoodie".
+
+2. **提示词构建规则**：
+   - 每个场景的 \`imagePrompt\` **必须** 包含上述的 **Character Prompt**。
+   - 结构：\`[Character Prompt], [Action], [Environment], [Style Tags]\`
+   - 风格标签 (Style Tags)："(Comic book style:1.5), (Identity preservation:1.2), vibrant colors, bold outlines, cel shading, clean lines, expressive, dynamic composition, flat color, graphic novel style, high quality, 8k."
+
+**输出 JSON 格式要求**：
+- title: 绘本标题 (中文)
+- characterDescription: (英文) 你提取的主角视觉特征描述。
+- scenes: 数组 (3个对象)
+  - pageNumber: 页码
+  - narration: (中文) 故事旁白。
+  - imagePrompt: (英文) 完整的生图提示词 (必须包含 characterDescription 的内容，不要用代词)。
 `;
 
-  // 使用 gemini-2.5-flash 替代 gemini-3-pro-preview 以避免配额限制
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+  // 4. 调用 Gemini 3 Pro 生成故事脚本
+  const textResponse = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
     contents: [
       {
         parts: [
-          { inlineData: { data: heroBase64, mimeType: 'video/webm' } },
-          { inlineData: { data: storyBase64, mimeType: 'video/webm' } },
-          { text: "请开始创作！请确保每一页漫画里的主角都和 'hero_video' 里的小朋友长得一模一样！" }
+          { inlineData: { data: heroBase64, mimeType: heroMimeType } },
+          { inlineData: { data: storyBase64, mimeType: storyMimeType } },
+          { text: "请分析视频中的主角样貌，并根据故事内容创作绘本脚本。请确保 imagePrompt 里详细描述了主角的样子，以便生成的图片和视频里的人像。" }
         ]
       }
     ],
@@ -73,14 +140,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
         type: Type.OBJECT,
         properties: {
           title: { type: Type.STRING },
-          character: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              visualDescription: { type: Type.STRING, description: "从视频提取的精确英文视觉特征标签" }
-            },
-            required: ["name", "visualDescription"]
-          },
+          characterDescription: { type: Type.STRING },
           scenes: {
             type: Type.ARRAY,
             items: {
@@ -88,56 +148,59 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob): Pro
               properties: {
                 pageNumber: { type: Type.NUMBER },
                 narration: { type: Type.STRING },
-                imagePrompt: { type: Type.STRING, description: "包含主角视觉特征的完整英文绘画提示词" }
+                imagePrompt: { type: Type.STRING }
               },
               required: ["pageNumber", "narration", "imagePrompt"]
             }
           }
         },
-        required: ["title", "character", "scenes"]
+        required: ["title", "characterDescription", "scenes"]
       }
     }
   });
 
-  const storyData = JSON.parse(response.text);
+  const storyData = JSON.parse(textResponse.text);
   
-  // 按照分镜逐一生成漫画插画
-  for (let scene of storyData.scenes) {
-    scene.imageUrl = await generateComicIllustration(scene.imagePrompt);
-  }
+  // 5. 调用生图接口
+  await Promise.all(storyData.scenes.map(async (scene: any) => {
+    try {
+      scene.imageUrl = await generateImageViaCustomAPI(scene.imagePrompt, heroReferenceUrl);
+    } catch (err) {
+      console.error("生图失败:", err);
+      scene.imageUrl = `https://picsum.photos/800/800?random=${scene.pageNumber}`;
+    }
+  }));
 
   return storyData;
 };
 
-/**
- * 使用 gemini-2.5-flash-image 生成高度匹配且具有漫画质感的图片
- */
-const generateComicIllustration = async (prompt: string): Promise<string> => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) return 'https://picsum.photos/600/600?error=no_key';
+const generateImageViaCustomAPI = async (prompt: string, referenceImageUrl: string): Promise<string> => {
+  // 调用自定义 API
+  const submitResponse = await fetch(`${API_BASE}/produces/image/nanoBanana/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      aiImgTransferText: prompt,
+      size: "1:1",
+      imageSize: "1K",
+      imageList: [referenceImageUrl] 
+    })
+  });
 
-  const ai = new GoogleGenAI({ apiKey });
-  try {
-    // 漫画/动漫风格 Prompt 后缀
-    const finalPrompt = `${prompt}, masterpiece, best quality, anime style, japanese manga, cel shaded, vibrant colors, clean lines, detailed background.`;
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: [{ parts: [{ text: finalPrompt }] }],
-      config: { 
-        imageConfig: { 
-          aspectRatio: "1:1" 
-        } 
-      }
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-  } catch (e) {
-    console.error("生成漫画魔法插画失败:", e);
+  const submitResult = await submitResponse.json();
+  if (submitResult.code !== 200) {
+    throw new Error(`提交生图任务失败: ${submitResult.msg || '未知错误'}`);
   }
-  return 'https://picsum.photos/600/600?random=' + Math.random();
+
+  const taskId = submitResult.data;
+  // 轮询等待结果
+  for (let i = 0; i < 20; i++) { 
+    await new Promise(r => setTimeout(r, 3000));
+    const queryResponse = await fetch(`${API_BASE}/produces/image/${taskId}`);
+    const queryResult = await queryResponse.json();
+    if (queryResult.code === 200 && queryResult.data && queryResult.data.picStatus === "5") {
+      return queryResult.data.picUrl;
+    }
+  }
+  throw new Error("生图超时，请稍后再试");
 };

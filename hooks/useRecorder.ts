@@ -3,25 +3,26 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { RecordMode } from '../types';
 
 export const LIMITS = {
-  protagonist: 30, // 30秒
-  story: 180,     // 3分钟 (180秒)
+  protagonist: 30, 
+  story: 180,     
 };
 
-export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: number) => void) => {
+export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: number, faceSnapshot?: Blob) => void) => {
   const [isRecording, setIsRecording] = useState(false);
   const [activeRecordMode, setActiveRecordMode] = useState<RecordMode | null>(null);
   const [timeLeft, setTimeLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [isFlashActive, setIsFlashActive] = useState(false); // 闪光灯特效状态
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const currentModeRef = useRef<RecordMode | null>(null);
   const startTimeRef = useRef<number>(0);
-  // 新增：用于存储当前录制实际使用的 MIME type
   const mimeTypeRef = useRef<string>('video/webm');
+  const capturedFaceBlobRef = useRef<Blob | undefined>(undefined);
 
   const stopStream = useCallback(() => {
     if (stream) {
@@ -31,35 +32,58 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
   }, [stream]);
 
   const initCamera = useCallback(async (mode?: 'user' | 'environment') => {
-    try {
-      setError(null);
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-      
-      const targetMode = mode || facingMode;
-      const newStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 1280 }, 
-          height: { ideal: 720 }, 
-          facingMode: targetMode 
-        }, 
-        audio: true 
-      });
-      setStream(newStream);
-      setFacingMode(targetMode);
-      return newStream;
-    } catch (err) {
-      console.error("Camera init error:", err);
-      setError('permission_denied');
-      return null;
+    const targetMode = mode || facingMode;
+    setError(null);
+
+    const constraintsList = [
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: targetMode }, audio: true },
+      { video: { facingMode: targetMode }, audio: true },
+      { video: true, audio: true }
+    ];
+
+    for (const constraints of constraintsList) {
+      try {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+        setStream(newStream);
+        setFacingMode(targetMode);
+        return newStream;
+      } catch (err: any) {}
     }
+    setError('not_found');
+    return null;
   }, [facingMode, stream]);
+
+  // 抓拍当前视频帧
+  const captureFrame = useCallback(() => {
+    const video = document.querySelector('video');
+    if (!video || !stream) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      // 如果是前置摄像头，需要镜像翻转
+      if (facingMode === 'user') {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          capturedFaceBlobRef.current = blob;
+          setIsFlashActive(true);
+          setTimeout(() => setIsFlashActive(false), 500); // 闪光效果持续 500ms
+          console.log("📸 魔法抓拍：已捕捉高清正脸图");
+        }
+      }, 'image/jpeg', 0.9);
+    }
+  }, [stream, facingMode]);
 
   const toggleCamera = useCallback(async () => {
     if (isRecording) return;
-    const newMode = facingMode === 'user' ? 'environment' : 'user';
-    await initCamera(newMode);
+    await initCamera(facingMode === 'user' ? 'environment' : 'user');
   }, [facingMode, isRecording, initCamera]);
 
   const stopRecording = useCallback(() => {
@@ -71,65 +95,48 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
     }
   }, [isRecording]);
 
-  // 核心修改：检测浏览器支持的最佳 MIME Type
-  const getSupportedMimeType = () => {
-    const types = [
-      'video/mp4',             // Safari 优先
-      'video/webm;codecs=vp9', // Chrome 高质量
-      'video/webm;codecs=vp8', // Chrome 兼容
-      'video/webm'             // 通用后备
-    ];
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) {
-        return type;
-      }
-    }
-    return ''; // 让浏览器使用默认值
-  };
-
   const startRecording = useCallback(async (mode: RecordMode) => {
     let currentStream = stream;
-    if (!currentStream) {
+    if (!currentStream || !currentStream.active) {
       currentStream = await initCamera();
     }
-    
     if (!currentStream) return;
 
     currentModeRef.current = mode;
     setActiveRecordMode(mode);
     chunksRef.current = [];
     startTimeRef.current = Date.now();
+    capturedFaceBlobRef.current = undefined;
     
-    const mimeType = getSupportedMimeType();
-    mimeTypeRef.current = mimeType; // 记录选中的格式
-
-    // 传入 mimeType 选项
-    const options = mimeType ? { mimeType } : undefined;
+    const types = ['video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+    mimeTypeRef.current = mimeType;
     
     try {
-      const recorder = new MediaRecorder(currentStream, options);
-      
+      const recorder = new MediaRecorder(currentStream, mimeType ? { mimeType } : undefined);
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
-      
       recorder.onstop = () => {
-        // 使用记录的 mimeType 创建 Blob，确保 iOS 能识别
-        // 如果 mimeType 为空（默认），则尝试用 recorder.mimeType，最后兜底 video/webm
-        const finalType = mimeTypeRef.current || recorder.mimeType || 'video/webm';
-        const blob = new Blob(chunksRef.current, { type: finalType });
+        const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current || 'video/webm' });
         const duration = Math.round((Date.now() - startTimeRef.current) / 1000);
-        onFinish(blob, mode, duration);
+        onFinish(blob, mode, duration, capturedFaceBlobRef.current);
       };
 
       recorder.start();
       mediaRecorderRef.current = recorder;
       setIsRecording(true);
-      
-      const limit = LIMITS[mode];
-      setTimeLeft(limit);
+      setTimeLeft(LIMITS[mode]);
 
+      if (timerRef.current) clearInterval(timerRef.current);
+      let ticks = 0;
       timerRef.current = window.setInterval(() => {
+        ticks++;
+        // 核心逻辑：如果是主角录制，在第 1.5 秒（约 ticks=3, 因为 500ms 计一次更准，这里暂定 1s）自动抓拍
+        if (mode === 'protagonist' && ticks === 2) {
+          captureFrame();
+        }
+        
         setTimeLeft(prev => {
           if (prev <= 1) {
             stopRecording();
@@ -139,18 +146,9 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
         });
       }, 1000);
     } catch (e) {
-      console.error("Failed to create MediaRecorder:", e);
-      alert("无法启动录制，请检查手机兼容性或使用 Chrome 浏览器。");
       setIsRecording(false);
-      setActiveRecordMode(null);
     }
-  }, [stream, initCamera, onFinish, stopRecording]);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
+  }, [stream, initCamera, onFinish, stopRecording, captureFrame]);
 
   return {
     isRecording,
@@ -159,6 +157,7 @@ export const useRecorder = (onFinish: (blob: Blob, mode: RecordMode, duration: n
     error,
     stream,
     facingMode,
+    isFlashActive,
     startRecording,
     stopRecording,
     initCamera,
