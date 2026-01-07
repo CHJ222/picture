@@ -4,8 +4,11 @@ import COS from "https://esm.sh/cos-js-sdk-v5";
 
 const API_BASE = "https://pinstyle-test.imagiclamp.cn/api";
 
+// --- 辅助函数：上传 COS ---
 const uploadToTencentCOS = async (imageBlob: Blob): Promise<string> => {
-  const currentOrigin = window.location.origin;
+  // 打印当前域名到控制台，方便用户配置 COS 跨域
+  console.log("🌐 当前域名 (Origin) 用于 COS 跨域配置:", window.location.origin);
+  
   const authResponse = await fetch(`${API_BASE}/system/cos/v1/getPreSignedUrlForPost`);
   const authResult = await authResponse.json();
   
@@ -36,12 +39,16 @@ const uploadToTencentCOS = async (imageBlob: Blob): Promise<string> => {
       Key: fileName,
       Body: imageBlob
     }, (err, data) => {
-      if (err) reject(new Error("上传图片到云端失败，请检查跨域设置"));
+      if (err) {
+        console.error("❌ COS 上传失败，请确认已在腾讯云控制台添加跨域白名单:", window.location.origin);
+        reject(new Error("上传图片到云端失败，请检查跨域设置"));
+      }
       else resolve(`https://${bucket}.cos.${Region}.myqcloud.com/${fileName}`);
     });
   });
 };
 
+// --- 辅助函数：Blob 转 Base64 ---
 const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -51,6 +58,7 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
   });
 };
 
+// --- 辅助函数：从视频抽帧 ---
 const extractFrameAsBlob = (videoBlob: Blob): Promise<Blob> => {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
@@ -76,98 +84,178 @@ const extractFrameAsBlob = (videoBlob: Blob): Promise<Blob> => {
   });
 };
 
+// --- 核心业务逻辑 ---
+
+interface ExtractedMetadata {
+  title: string;
+  summary: string;
+  charAge: string;
+  charGender: string;
+  charClothing: string;
+}
+
+// 步骤 1: 分析视频内容
+const analyzeVideoContent = async (ai: GoogleGenAI, heroBase64: string, heroMime: string, storyBase64: string, storyMime: string): Promise<ExtractedMetadata> => {
+  const analysisPrompt = `
+  请分析提供的两个视频：
+  1. 第一个视频是 'Hero Video' (主角视频)。
+  2. 第二个视频是 'Story Video' (故事讲述)。
+
+  请提取以下信息并以 JSON 格式返回：
+  - title: 根据故事内容起一个有趣的中文书名。
+  - summary: 故事内容的详细中文梗概。
+  - charAge: 预估主角的年龄 (例如 "5 years old")。
+  - charGender: 主角的性别 (例如 "Boy" 或 "Girl")。
+  - charClothing: 主角的服装特征描述 (中文描述，例如 "黄色卫衣")。
+  `;
+
+  const resp = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview', 
+    contents: [{
+      parts: [
+        { inlineData: { data: heroBase64, mimeType: heroMime } },
+        { inlineData: { data: storyBase64, mimeType: storyMime } },
+        { text: analysisPrompt }
+      ]
+    }],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          summary: { type: Type.STRING },
+          charAge: { type: Type.STRING },
+          charGender: { type: Type.STRING },
+          charClothing: { type: Type.STRING },
+        }
+      }
+    }
+  });
+
+  return JSON.parse(resp.text);
+};
+
+// 步骤 2: 构建 Prompt 模板并生成详细提示词
+const generatePagePrompts = async (ai: GoogleGenAI, metadata: ExtractedMetadata, heroBase64: string, heroMime: string, storyBase64: string, storyMime: string): Promise<string> => {
+  const promptTemplate = `
+角色设定：你现在是一位专业的绘本主编兼艺术总监。我需要你协助我策划并编写一本定制绘本或定制漫画书。你需要写出每页的AI绘画提示词（Prompt）。
+
+项目基础信息（请严格遵守）：
+书名：${metadata.title}
+系列名：魔法绘本系列
+内容梗概：${metadata.summary}
+出图比例：1:1
+人物或物体1的名字：The Protagonist (Kid)
+人物或物体1的照片：参考图1 (Hero Video Reference)
+人物1的年龄：${metadata.charAge}
+人物1的性别：${metadata.charGender}
+
+请根据内容梗概、文案风格，按照3页的篇幅(不包含封面和扉页)，编写每一页的生图提示词内容，每一页提示词之间用################符号分割。
+
+人物服装特殊要求：${metadata.charClothing}
+...
+`;
+
+  const resp = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
+    contents: [
+      {
+        parts: [
+          { inlineData: { data: heroBase64, mimeType: heroMime } },
+          { inlineData: { data: storyBase64, mimeType: storyMime } },
+          { text: promptTemplate }
+        ]
+      }
+    ]
+  });
+
+  return resp.text;
+};
+
+const parseStoryBlocks = (fullText: string) => {
+  const blocks = fullText.split('################').map(b => b.trim()).filter(b => b.length > 0);
+  const scenes = [];
+  
+  const extractNarration = (text: string): string => {
+    const cnMatch = text.match(/中文文案[：:]\s*(.*?)(\n|$)/) || text.match(/文案语言1[：:]\s*(.*?)(\n|$)/);
+    const enMatch = text.match(/英文文案[：:]\s*(.*?)(\n|$)/) || text.match(/文案语言2[：:]\s*(.*?)(\n|$)/);
+    
+    let narration = "";
+    if (cnMatch) narration += cnMatch[1].trim();
+    if (enMatch) narration += "\n" + enMatch[1].trim();
+    
+    if (!narration) {
+      const quotes = text.match(/“([^”]+)”/g);
+      if (quotes && quotes.length > 0) {
+        narration = quotes.slice(0, 2).join('\n').replace(/[“”]/g, '');
+      } else {
+        narration = "（AI 正在绘制这页的故事...）";
+      }
+    }
+    return narration;
+  };
+
+  let pageIndex = 1;
+  for (const block of blocks) {
+    if (block.includes(`【Page ${pageIndex}`) || block.includes(`【Page${pageIndex}`)) {
+      scenes.push({
+        pageNumber: pageIndex,
+        narration: extractNarration(block),
+        imagePrompt: block 
+      });
+      pageIndex++;
+    }
+  }
+
+  if (scenes.length === 0 && blocks.length >= 3) {
+    const storyBlocks = blocks.slice(-3);
+    storyBlocks.forEach((block, idx) => {
+      scenes.push({
+        pageNumber: idx + 1,
+        narration: extractNarration(block),
+        imagePrompt: block
+      });
+    });
+  }
+
+  return scenes;
+};
+
 export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob, preCapturedFace?: Blob): Promise<any> => {
   const apiKey = process.env.API_KEY;
   if (!apiKey) throw new Error("API Key 未配置");
   const ai = new GoogleGenAI({ apiKey });
   
-  // 1. 准备主角正脸参考图
   const heroImageBlob = preCapturedFace || await extractFrameAsBlob(heroBlob);
 
-  // 2. 并行处理：转码视频 + 上传参考图
   const [heroBase64, storyBase64, heroReferenceUrl] = await Promise.all([
     blobToBase64(heroBlob),
     blobToBase64(storyBlob),
     uploadToTencentCOS(heroImageBlob)
   ]);
 
-  // 获取真实的 MIME 类型，确保 Gemini 能正确解析视频
   const heroMimeType = heroBlob.type.split(';')[0] || 'video/webm';
   const storyMimeType = storyBlob.type.split(';')[0] || 'video/webm';
 
-  // 3. 定义 Gemini 3 的系统指令 (强化主角特征提取 + 漫画风格)
-  const systemInstruction = `你是一位世界级的儿童绘本大师。
-任务：根据 'story_video' (故事讲述) 和 'hero_video' (主角视频)，创作一个 3 页的精彩漫画风格绘本。
+  const metadata = await analyzeVideoContent(ai, heroBase64, heroMimeType, storyBase64, storyMimeType);
+  const rawPromptText = await generatePagePrompts(ai, metadata, heroBase64, heroMimeType, storyBase64, storyMimeType);
+  const scenes = parseStoryBlocks(rawPromptText);
 
-**核心任务：确保主角相似度 (Character Consistency)**
-1. **视觉分析**：首先，仔细观察 'hero_video' 中的小朋友。提取所有关键视觉特征：
-   - 种族/肤色 (Ethnicity/Skin tone)
-   - 发型与发色 (Hair style & color)
-   - 服装细节 (Clothing color & type)
-   - 面部特征 (Face shape, glasses, etc.)
-   - 生成一个 **精确的英文人物描述 (Character Prompt)**，例如: "a cute 5-year-old Chinese boy with short black hair and round glasses, wearing a yellow hoodie".
-
-2. **提示词构建规则**：
-   - 每个场景的 \`imagePrompt\` **必须** 包含上述的 **Character Prompt**。
-   - 结构：\`[Character Prompt], [Action], [Environment], [Style Tags]\`
-   - 风格标签 (Style Tags)："(Comic book style:1.5), (Identity preservation:1.2), vibrant colors, bold outlines, cel shading, clean lines, expressive, dynamic composition, flat color, graphic novel style, high quality, 8k."
-
-**输出 JSON 格式要求**：
-- title: 绘本标题 (中文)
-- characterDescription: (英文) 你提取的主角视觉特征描述。
-- scenes: 数组 (3个对象)
-  - pageNumber: 页码
-  - narration: (中文) 故事旁白。
-  - imagePrompt: (英文) 完整的生图提示词 (必须包含 characterDescription 的内容，不要用代词)。
-`;
-
-  // 4. 调用 Gemini 3 Pro 生成故事脚本
-  const textResponse = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: [
-      {
-        parts: [
-          { inlineData: { data: heroBase64, mimeType: heroMimeType } },
-          { inlineData: { data: storyBase64, mimeType: storyMimeType } },
-          { text: "请分析视频中的主角样貌，并根据故事内容创作绘本脚本。请确保 imagePrompt 里详细描述了主角的样子，以便生成的图片和视频里的人像。" }
-        ]
-      }
-    ],
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          title: { type: Type.STRING },
-          characterDescription: { type: Type.STRING },
-          scenes: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                pageNumber: { type: Type.NUMBER },
-                narration: { type: Type.STRING },
-                imagePrompt: { type: Type.STRING }
-              },
-              required: ["pageNumber", "narration", "imagePrompt"]
-            }
-          }
-        },
-        required: ["title", "characterDescription", "scenes"]
-      }
-    }
-  });
-
-  const storyData = JSON.parse(textResponse.text);
+  const storyData = {
+    title: metadata.title,
+    character: {
+      name: "The Kid",
+      visualDescription: metadata.charClothing
+    },
+    scenes: scenes
+  };
   
-  // 5. 调用生图接口
   await Promise.all(storyData.scenes.map(async (scene: any) => {
     try {
       scene.imageUrl = await generateImageViaCustomAPI(scene.imagePrompt, heroReferenceUrl);
     } catch (err) {
-      console.error("生图失败:", err);
-      scene.imageUrl = `https://picsum.photos/800/800?random=${scene.pageNumber}`;
+      scene.imageUrl = `https://picsum.photos/1024/1024?random=${scene.pageNumber}`;
     }
   }));
 
@@ -175,12 +263,11 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob, preC
 };
 
 const generateImageViaCustomAPI = async (prompt: string, referenceImageUrl: string): Promise<string> => {
-  // 调用自定义 API
   const submitResponse = await fetch(`${API_BASE}/produces/image/nanoBanana/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      aiImgTransferText: prompt,
+      aiImgTransferText: prompt, 
       size: "1:1",
       imageSize: "1K",
       imageList: [referenceImageUrl] 
@@ -193,8 +280,7 @@ const generateImageViaCustomAPI = async (prompt: string, referenceImageUrl: stri
   }
 
   const taskId = submitResult.data;
-  // 轮询等待结果
-  for (let i = 0; i < 20; i++) { 
+  for (let i = 0; i < 30; i++) { 
     await new Promise(r => setTimeout(r, 3000));
     const queryResponse = await fetch(`${API_BASE}/produces/image/${taskId}`);
     const queryResult = await queryResponse.json();
