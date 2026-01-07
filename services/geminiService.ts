@@ -84,6 +84,23 @@ const extractFrameAsBlob = (videoBlob: Blob): Promise<Blob> => {
   });
 };
 
+// --- 辅助函数：重试逻辑 ---
+async function retryOperation<T>(operation: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: any) {
+    // 处理 429 (Too Many Requests) 和 503 (Service Unavailable)
+    const status = error.status || error.response?.status;
+    const message = error.message || '';
+    if (retries > 0 && (status === 429 || status === 503 || message.includes('429') || message.includes('quota'))) {
+      console.warn(`API Rate Limit hit. Retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return retryOperation(operation, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
+
 // --- 核心业务逻辑 ---
 
 interface ExtractedMetadata {
@@ -109,31 +126,32 @@ const analyzeVideoContent = async (ai: GoogleGenAI, heroBase64: string, heroMime
   - charClothing: 主角的服装特征描述 (中文描述，例如 "黄色卫衣")。
   `;
 
-  const resp = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview', 
-    contents: [{
-      parts: [
-        { inlineData: { data: heroBase64, mimeType: heroMime } },
-        { inlineData: { data: storyBase64, mimeType: storyMime } },
-        { text: analysisPrompt }
-      ]
-    }],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          title: { type: Type.STRING },
-          summary: { type: Type.STRING },
-          charAge: { type: Type.STRING },
-          charGender: { type: Type.STRING },
-          charClothing: { type: Type.STRING },
+  return retryOperation(async () => {
+    const resp = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview', 
+      contents: [{
+        parts: [
+          { inlineData: { data: heroBase64, mimeType: heroMime } },
+          { inlineData: { data: storyBase64, mimeType: storyMime } },
+          { text: analysisPrompt }
+        ]
+      }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            charAge: { type: Type.STRING },
+            charGender: { type: Type.STRING },
+            charClothing: { type: Type.STRING },
+          }
         }
       }
-    }
+    });
+    return JSON.parse(resp.text);
   });
-
-  return JSON.parse(resp.text);
 };
 
 // 步骤 2: 构建 Prompt 模板并生成详细提示词
@@ -151,26 +169,111 @@ const generatePagePrompts = async (ai: GoogleGenAI, metadata: ExtractedMetadata,
 人物1的年龄：${metadata.charAge}
 人物1的性别：${metadata.charGender}
 
-请根据内容梗概、文案风格，按照3页的篇幅(不包含封面和扉页)，编写每一页的生图提示词内容，每一页提示词之间用################符号分割。
+请根据内容梗概、文案风格，按照3页的篇幅(不包含封面和扉页)，根据人物或物体的数量、名字、人物年龄、及可能的关系，使用相应的人物或者物体的名字，编写每一页的详细内容，每一页画面要有丰富的内容元素，并为我输出每一页的生图提示词内容，每一页提示词之间用################符号分割。不需要开场白，直接从第一页开始输出。每一页的画风必须保持一致，每一页的故事情节和元素形象必须具有连贯性和一致性。
 
+根据视频里面描述的故事内容，和人物或物体的名字，判断每一个名字是不是人物。
+在提示词中一定要用中性的人称词，比如The kid, the child, the person，孩子等。禁止出现He、She、Boy、Girl、Man、Woman、他、她、男孩、女孩等人称词。
 人物服装特殊要求：${metadata.charClothing}
-...
+
+每一页提示词按照如下格式要求：
+
+输出的内容用全中文：
+
+【Cover】
+综合全部信息，编写一个画册封面的生图提示词。
+生成一张图片，描述如下：
+
+对于每个参考图：
+参考图1：列出人物和物体的名字、人物的年龄。写：“ 保持图片中人物的特征不变，人物的脸型和五官不变，人物的发型不发生任何变化，人物的发色不发生任何变化，同时保证衣服不变。Analyze this reference image. For the character's clothing features, facial features, eyes features and hair style, strictly refer to the Reference Image, and make the character look exactly like the age. For the object or toy's features, strictly refer to the Reference Image.”。
+参考图1的补充说明：如果该参考图不是人物，请不要在任何页里描述它的种类、特征、颜色等，严格参考它对应的参考图。
+
+画风：写：“Crayon drawing style, children's book illustration, wax pastel texture, rough edges, vibrant and warm colors, naive art style (蜡笔画风格，儿童绘本插画，油画棒质感)”
+图片中写的书名的要求：
+* 书名语言是 中文, and 英文。（文案中不要有“Chinese”、“English”、“CN”、“EN”、“中文”、“英文”等文字，文案中禁止出现He、She、Boy、Girl、Man、Woman、他、她、男孩、女孩等带有性别的人称词）。
+* 书名：${metadata.title}。
+* 书名字体：需要给出建议的字体，书名文字用手写体和漂亮的颜色，文字不要太小，书名文字有美丽的背景图案。
+* 书名位置：请指出这一页文字应该放在画面的哪里，确保不压住人物脸部。
+最上面用小字写：魔法绘本系列。
+最下面用小字写：“编号：[XHS${Math.floor(Math.random() * 1000000)}]”
+
+AI生图提示词要求（ Prompt）：请编写用于生图的中文提示词，要求画面内容元素丰富，不少于300个单词。详细描述该页的画面、构图、动作、场景、光影、人物表情、姿势、物体。
+
+排版与设计建议：画面满幅。写：“Ensure clean composition with anatomically correct body. Avoid extra limbs, extra arms, extra legs, mutated hands, fused fingers. Avoid split screen, avoid character duplication, avoid ghosting, avoid mirrored images.”。面部表情清晰可见。
+
+写：“以上画面是右面半个画面作为封面，而左面半个画面（封底）是右面半个画面的背景的自然延伸。封面和封底自然衔接连成一个整体画面。在封底的右下合适位置画一个半透明背景框，里面用中小号文字写如下信息（先翻译成英文）：
+“Written by AI & The Kid, Illustrated by Magic Maker” ”
+
+图片比例：1:1
+
+################
+
+【Title Page】
+生成一张扉页的图片，描述如下：
+
+画风：写：“Crayon drawing style, children's book illustration, wax pastel texture, rough edges, vibrant and warm colors, naive art style (蜡笔画风格，儿童绘本插画，油画棒质感)”
+AI生图提示词要求（ Prompt）：请编写用于生图的中文提示词，要求画面为与全书内容匹配的简单的背景图。写：“把参考图1的原图，不做任何变化，放到这一页中的合适位置、合适大小，不要居中。参考图1的边框可以用一些小的点缀。”
+图片中写的文案的要求：
+* 文案语言是 中文, and 英文。（文案中不要有“Chinese”、“English”、“CN”、“EN”、“中文”、“英文”等文字，文案中禁止出现He、She、Boy、Girl、Man、Woman、他、她、男孩、女孩等带有性别的人称词）。
+* 扉页文案1：“这是一个关于勇气的故事” (或者根据故事内容生成一句简短的slogan)
+* 扉页文案2：“送给最特别的你”
+* 文案字体：需要给出建议的字体，用手写体，文字不要太小。
+* 文案位置：请指出这一页两组文案应该放在画面的哪里。
+
+排版与设计建议：画面满幅。写：“Ensure clean composition. Avoid split screen, avoid mirrored images.”。
+
+图片比例：1:1
+
+################
+
+【Page 1】
+要求：由于每一页的提示词都是独立生图的提示词，所以一定要确保每一页的提示词是完整的、详细的，禁止省略提示词，禁止出现“同上一页”这类的描述。
+生成一整张图片，描述如下：
+
+对于每个参考图：
+参考图1：列出人物和物体的名字、人物的年龄。写：“ 保持图片中人物的特征不变，人物的脸型和五官不变，人物的发型不发生任何变化，人物的发色不发生任何变化，同时保证衣服不变。Analyze this reference image. For the character's clothing features, facial features, eyes features and hair style, strictly refer to the Reference Image, and make the character look exactly like the age. For the object or toy's features, strictly refer to the Reference Image.”。
+
+画风：写：“Crayon drawing style, children's book illustration, wax pastel texture, rough edges, vibrant and warm colors, naive art style (蜡笔画风格，儿童绘本插画，油画棒质感)”
+图片中写的文案的要求：
+* 文案语言是 中文, and 英文。（文案中不要有“Chinese”、“English”、“CN”、“EN”、“中文”、“英文”等文字，文案中禁止出现He、She、Boy、Girl、Man、Woman、他、她、男孩、女孩等带有性别的人称词）。文案用简单的口语化的语言。文字中可以出现人物的名字，也可以不出现。
+* 中文文案：文案字数不少于20个字或词。
+* 英文文案：文案字数不少于20个字或词。
+没有编号和系列名。
+字体：需要给出建议的字体字号、文字背景，确保每一页文字字体字号背景一致。
+
+AI生图提示词要求（ Prompt）：请编写用于生图的中文提示词，要求画面内容元素丰富，不少于300个单词。详细描述该页的画面、构图、动作、场景、光影、人物表情、姿势、物体。
+
+排版与设计建议：人物不要居中。画面满幅。写：“Ensure clean composition with anatomically correct body. Avoid extra limbs, extra arms, extra legs, mutated hands, fused fingers. Avoid split screen, avoid character duplication, avoid ghosting, avoid mirrored images.”。面部表情清晰可见。
+
+图片比例：1:1
+
+################
+
+【Page 2】
+(要求同 Page 1，请根据故事发展编写)
+
+################
+
+【Page 3】
+(要求同 Page 1，请根据故事发展编写)
+
+################
 `;
 
-  const resp = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: [
-      {
-        parts: [
-          { inlineData: { data: heroBase64, mimeType: heroMime } },
-          { inlineData: { data: storyBase64, mimeType: storyMime } },
-          { text: promptTemplate }
-        ]
-      }
-    ]
+  return retryOperation(async () => {
+    const resp = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview', // 替换为 Flash 模型以避免 429 配额错误
+      contents: [
+        {
+          parts: [
+            { inlineData: { data: heroBase64, mimeType: heroMime } },
+            { inlineData: { data: storyBase64, mimeType: storyMime } },
+            { text: promptTemplate }
+          ]
+        }
+      ]
+    });
+    return resp.text;
   });
-
-  return resp.text;
 };
 
 const parseStoryBlocks = (fullText: string) => {
@@ -255,6 +358,7 @@ export const createMagicStoryBook = async (heroBlob: Blob, storyBlob: Blob, preC
     try {
       scene.imageUrl = await generateImageViaCustomAPI(scene.imagePrompt, heroReferenceUrl);
     } catch (err) {
+      console.error(err);
       scene.imageUrl = `https://picsum.photos/1024/1024?random=${scene.pageNumber}`;
     }
   }));
