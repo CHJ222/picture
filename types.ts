@@ -15,7 +15,6 @@ export interface VideoSnippet {
   type: RecordMode;
   timestamp: number;
   duration: number;
-  faceSnapshot?: Blob; // 自动捕捉的高清正脸
 }
 
 export interface StoryScene {

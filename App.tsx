@@ -13,12 +13,11 @@ const App: React.FC = () => {
   const [snippets, setSnippets] = useState<VideoSnippet[]>([]);
   const [story, setStory] = useState<MagicStory | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [previewVideo, setPreviewVideo] = useState<string | null>(null);
   const [activePage, setActivePage] = useState(0);
   const [magicQuote, setMagicQuote] = useState("正在收集星星碎片...");
-  const [uploadingMode, setUploadingMode] = useState<RecordMode | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const quotes = [
     "正在召唤灵感精灵...",
@@ -38,11 +37,11 @@ const App: React.FC = () => {
     }
   }, [isGenerating]);
 
-  const handleRecordingFinish = (blob: Blob, mode: RecordMode, duration: number, faceSnapshot?: Blob) => {
+  const handleRecordingFinish = (blob: Blob, mode: RecordMode, duration: number) => {
     const url = URL.createObjectURL(blob);
     setSnippets(prev => [...prev, {
       id: Math.random().toString(36).substr(2, 9),
-      blob, url, type: mode, timestamp: Date.now(), duration, faceSnapshot
+      blob, url, type: mode, timestamp: Date.now(), duration
     }]);
   };
 
@@ -51,9 +50,7 @@ const App: React.FC = () => {
     activeRecordMode,
     timeLeft, 
     stream, 
-    error: recorderError,
     facingMode,
-    isFlashActive,
     startRecording, 
     stopRecording, 
     initCamera, 
@@ -62,49 +59,20 @@ const App: React.FC = () => {
   } = useRecorder(handleRecordingFinish);
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
+    if (videoRef.current && stream) videoRef.current.srcObject = stream;
   }, [stream]);
 
   const canGenerate = useMemo(() => {
     return snippets.some(s => s.type === 'protagonist') && snippets.some(s => s.type === 'story');
   }, [snippets]);
 
-  const handleStartMagic = async () => {
-    setCurrentPage(Page.Record);
-    await initCamera();
-  };
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file && uploadingMode) {
-      const url = URL.createObjectURL(file);
-      setSnippets(prev => [...prev, {
-        id: Math.random().toString(36).substr(2, 9),
-        blob: file, 
-        url, 
-        type: uploadingMode, 
-        timestamp: Date.now(), 
-        duration: 0 
-      }]);
-      setUploadingMode(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const triggerUpload = (mode: RecordMode) => {
-    setUploadingMode(mode);
-    fileInputRef.current?.click();
-  };
-
   const handleGenerateMagic = async () => {
     setIsGenerating(true);
     try {
-      const heroSnippet = snippets.find(s => s.type === 'protagonist')!;
+      const heroSnippet = snippets.find(s => s.type === 'protagonist')!.blob;
       const storySnippet = snippets.find(s => s.type === 'story')!.blob;
       
-      const result = await createMagicStoryBook(heroSnippet.blob, storySnippet, heroSnippet.faceSnapshot);
+      const result = await createMagicStoryBook(heroSnippet, storySnippet);
       setStory(result);
       setCurrentPage(Page.Result);
       confetti({
@@ -116,15 +84,17 @@ const App: React.FC = () => {
       stopStream();
     } catch (err: any) {
       console.error(err);
-      alert(`魔法中断了！：${err.message}`);
+      alert(`魔法中断了！可能是猫咪踩到了电线：${err.message}`);
     } finally {
       setIsGenerating(false);
     }
   };
 
+  // 修改：添加 safe-pt 和 safe-pb，使用 min-h-dvh
   const renderHome = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center max-w-[430px] mx-auto relative overflow-hidden">
+    <div className="flex flex-col items-center justify-center min-h-dvh p-6 text-center max-w-[430px] mx-auto relative overflow-hidden safe-pt safe-pb">
       <div className="absolute top-10 left-10 animate-float opacity-40"><ICONS.Cloud /></div>
+      <div className="absolute top-40 right-10 animate-float delay-75 opacity-30 scale-75"><ICONS.Cloud /></div>
       <div className="absolute bottom-40 left-5 magic-sparkle opacity-60"><ICONS.Star /></div>
       
       <div className="relative z-10">
@@ -134,129 +104,119 @@ const App: React.FC = () => {
         </h1>
         <p className="text-xl font-bold text-gray-500 mb-12">把你录下来的故事变成真正的画册</p>
         
-        <Button color="yellow" size="xl" onClick={handleStartMagic} className="px-16 py-8 rounded-[4rem]">
+        <Button color="yellow" size="xl" onClick={() => { setCurrentPage(Page.Record); initCamera(); }} className="px-16 py-8 rounded-[4rem]">
           <span className="text-3xl">开启魔法</span>
           <span className="text-4xl">🪄</span>
         </Button>
       </div>
+
+      <div className="absolute bottom-10 text-gray-400 font-bold text-sm safe-pb">
+        适用于 4-10 岁的小小探险家
+      </div>
     </div>
   );
 
+  // 修改：添加 safe-pt 和 safe-pb 到容器
   const renderRecord = () => (
-    <div className="flex flex-col min-h-screen bg-[#E3F2FD] p-4 max-w-[430px] mx-auto border-x-4 border-black relative">
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="video/*" className="hidden" />
-      
-      <header className="flex justify-between items-center mb-4">
+    <div className="flex flex-col min-h-dvh bg-[#E3F2FD] px-4 max-w-[430px] mx-auto border-x-4 border-black relative safe-pt safe-pb">
+      <header className="flex justify-between items-center mb-4 pt-2">
         <Button color="white" size="sm" onClick={() => { stopStream(); setCurrentPage(Page.Home); }}>🏠 退出</Button>
         <div className="px-4 py-2 bg-white rounded-full border-2 border-black font-black text-sm">
-          素材: {snippets.length}/2
+          已收集: {snippets.length}
         </div>
       </header>
 
-      <div className="relative w-full aspect-square bg-black rounded-[2.5rem] border-4 border-black overflow-hidden neubrutalism-shadow mb-6">
-        {/* 魔法抓拍闪光特效 */}
-        {isFlashActive && (
-          <div className="absolute inset-0 z-50 bg-white animate-[flash_0.5s_ease-out_forwards]"></div>
-        )}
+      <div className="relative w-full aspect-square bg-black rounded-[2.5rem] border-4 border-black overflow-hidden neubrutalism-shadow mb-6 shrink-0">
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          muted 
+          playsInline 
+          className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} 
+        />
         
-        {recorderError ? (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-gray-900 text-white p-6 text-center">
-            <div className="text-5xl mb-4">🚫</div>
-            <p className="font-bold text-sm mb-4">摄像头不可用</p>
-            <Button color="white" size="sm" onClick={() => triggerUpload('protagonist')}>上传视频</Button>
+        {isRecording && (
+          <div className="absolute top-4 left-4 bg-red-500 text-white px-4 py-1 rounded-full border-2 border-black font-black flex items-center gap-2 animate-pulse">
+             <div className="w-2 h-2 bg-white rounded-full"></div>
+             {timeLeft}s
           </div>
-        ) : (
-          <>
-            <video ref={videoRef} autoPlay muted playsInline className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
-            {isRecording && (
-              <div className="absolute top-4 left-4 bg-red-500 text-white px-4 py-1 rounded-full border-2 border-black font-black flex items-center gap-2 animate-pulse z-20">
-                 <div className="w-2 h-2 bg-white rounded-full"></div> {timeLeft}s
-              </div>
-            )}
-            {/* 抓拍文字反馈 */}
-            {isFlashActive && activeRecordMode === 'protagonist' && (
-              <div className="absolute inset-0 flex items-center justify-center z-[51]">
-                <span className="bg-yellow-400 border-4 border-black px-6 py-2 rounded-full font-black text-2xl rotate-[-5deg] animate-bounce">
-                  ✨ 捕捉正脸!
-                </span>
-              </div>
-            )}
-          </>
         )}
 
-        {!recorderError && !isRecording && (
-          <button onClick={toggleCamera} className="absolute bottom-4 right-4 w-12 h-12 bg-white rounded-full border-4 border-black flex items-center justify-center text-xl bouncy z-20">🔄</button>
-        )}
+        <button 
+          onClick={toggleCamera}
+          className="absolute bottom-4 right-4 w-12 h-12 bg-white rounded-full border-4 border-black flex items-center justify-center text-xl bouncy active:scale-90"
+        >
+          🔄
+        </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <Card color={snippets.some(s => s.type === 'protagonist') ? 'green' : 'white'} className="p-3 text-center border-2 flex flex-col min-h-[140px]">
-          <div className="text-3xl mb-1">🎭</div>
-          <div className="text-[12px] font-black mb-2">主角介绍</div>
-          <div className="mt-auto">
-            {!recorderError ? (
-              <Button color="pink" size="sm" className="w-full text-xs py-2" onClick={() => (isRecording && activeRecordMode === 'protagonist') ? stopRecording() : startRecording('protagonist')}>
-                {(isRecording && activeRecordMode === 'protagonist') ? '停止' : '开始录制'}
-              </Button>
-            ) : (
-              <Button color="white" size="sm" className="w-full text-xs py-2 border-dashed" onClick={() => triggerUpload('protagonist')}>上传视频</Button>
-            )}
-          </div>
-        </Card>
-        
-        <Card color={snippets.some(s => s.type === 'story') ? 'blue' : 'white'} className="p-3 text-center border-2 flex flex-col min-h-[140px]">
-          <div className="text-3xl mb-1">📢</div>
-          <div className="text-[12px] font-black mb-2">情节描述</div>
-          <div className="mt-auto">
-            {!recorderError ? (
-              <Button color="blue" size="sm" className="w-full text-xs py-2" onClick={() => (isRecording && activeRecordMode === 'story') ? stopRecording() : startRecording('story')}>
-                {(isRecording && activeRecordMode === 'story') ? '停止' : '开始录制'}
-              </Button>
-            ) : (
-              <Button color="white" size="sm" className="w-full text-xs py-2 border-dashed" onClick={() => triggerUpload('story')}>上传视频</Button>
-            )}
-          </div>
-        </Card>
+      <div className="flex flex-col gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-3">
+          <Card color={snippets.some(s => s.type === 'protagonist') ? 'green' : 'white'} className="p-3 text-center border-2">
+            <div className="text-3xl mb-1">🎭</div>
+            <div className="text-[10px] font-black mb-2">第1步: 介绍主角</div>
+            <Button 
+              color="pink" 
+              size="sm" 
+              className="w-full text-sm"
+              onClick={() => (isRecording && activeRecordMode === 'protagonist') ? stopRecording() : startRecording('protagonist')}
+            >
+              {(isRecording && activeRecordMode === 'protagonist') ? '停止' : '开始录制'}
+            </Button>
+          </Card>
+          <Card color={snippets.some(s => s.type === 'story') ? 'blue' : 'white'} className="p-3 text-center border-2">
+            <div className="text-3xl mb-1">📢</div>
+            <div className="text-[10px] font-black mb-2">第2步: 讲讲情节</div>
+            <Button 
+              color="blue" 
+              size="sm" 
+              className="w-full text-sm"
+              onClick={() => (isRecording && activeRecordMode === 'story') ? stopRecording() : startRecording('story')}
+            >
+              {(isRecording && activeRecordMode === 'story') ? '停止' : '开始录制'}
+            </Button>
+          </Card>
+        </div>
       </div>
 
-      <div className="bg-white border-4 border-black rounded-[2rem] p-4 flex-1 flex flex-col overflow-hidden">
+      <div className="bg-white border-4 border-black rounded-[2rem] p-4 flex-1 flex flex-col overflow-hidden min-h-[100px]">
         <h3 className="font-black text-sm mb-2">🔮 魔法素材库</h3>
         <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-hide">
           {snippets.map(s => (
             <div key={s.id} className="flex items-center gap-2 bg-[#F9F9F9] p-2 rounded-xl border-2 border-black">
-              <div className="w-10 h-10 bg-black rounded-lg overflow-hidden shrink-0 border-2 border-black">
-                {s.faceSnapshot ? (
-                  <img src={URL.createObjectURL(s.faceSnapshot)} className="w-full h-full object-cover" />
-                ) : (
-                  <video src={s.url} className="w-full h-full object-cover" muted />
-                )}
+              <div className="w-10 h-10 bg-black rounded-lg overflow-hidden shrink-0">
+                <video src={s.url} className="w-full h-full object-cover" muted />
               </div>
               <div className="flex-1 text-[10px] font-black">
-                {s.type === 'protagonist' ? (s.faceSnapshot ? '✨ 主角高清正脸' : '🦸 主角片段') : '📖 故事内容'}
+                {s.type === 'protagonist' ? '🦸 主角片段' : '📖 故事内容'}
               </div>
-              <button onClick={() => setSnippets(p => p.filter(x => x.id !== s.id))} className="text-sm p-1">🗑️</button>
+              <button onClick={() => setSnippets(p => p.filter(x => x.id !== s.id))} className="text-sm">🗑️</button>
             </div>
           ))}
-          {snippets.length === 0 && <div className="py-8 text-center text-gray-400 text-xs italic">录制一段视频，开启绘本魔法...</div>}
+          {snippets.length === 0 && <div className="py-4 text-center text-gray-400 text-xs italic">还没有收集到素材...</div>}
         </div>
         
-        <Button color={canGenerate ? 'green' : 'yellow'} disabled={!canGenerate} onClick={() => setCurrentPage(Page.Generate)} className={`mt-4 w-full py-4 ${canGenerate ? 'animate-bounce' : 'opacity-40'}`}>
-           施展 3 页绘本魔法 ✨
+        <Button 
+          color={canGenerate ? 'green' : 'yellow'} 
+          disabled={!canGenerate} 
+          onClick={() => setCurrentPage(Page.Generate)} 
+          className={`mt-4 w-full py-4 ${canGenerate ? 'animate-bounce' : 'opacity-40'}`}
+        >
+           施展绘本魔法 ✨
         </Button>
       </div>
 
-      <style>{`
-        @keyframes flash {
-          0% { opacity: 0; }
-          20% { opacity: 0.8; }
-          100% { opacity: 0; }
-        }
-      `}</style>
+      {previewVideo && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-6" onClick={() => setPreviewVideo(null)}>
+          <video src={previewVideo} controls autoPlay className="w-full rounded-2xl border-4 border-white" />
+          <p className="mt-4 text-white font-bold">点击任意位置关闭</p>
+        </div>
+      )}
     </div>
   );
 
   const renderGenerate = () => (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#C1A3FF] p-8 text-center max-w-[430px] mx-auto">
+    <div className="flex flex-col items-center justify-center min-h-dvh bg-[#C1A3FF] p-8 text-center max-w-[430px] mx-auto safe-pt safe-pb">
       {isGenerating ? (
         <div className="space-y-8">
            <div className="relative">
@@ -274,6 +234,7 @@ const App: React.FC = () => {
         <div className="space-y-8 animate-float">
            <div className="text-9xl">🧙‍♂️</div>
            <h2 className="text-4xl font-black text-white">咒语已准备好！</h2>
+           <p className="text-white font-bold">准备好见证奇迹了吗？</p>
            <Button color="yellow" size="xl" onClick={handleGenerateMagic} className="rounded-full px-16 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
              激活魔法！
            </Button>
@@ -282,30 +243,67 @@ const App: React.FC = () => {
     </div>
   );
 
+  // 修改：Header 增加 paddingTop, Footer 增加 paddingBottom
   const renderResult = () => {
     if (!story) return null;
     const currentScene = story.scenes[activePage];
 
     return (
-      <div className="flex flex-col min-h-screen bg-[#FFF9E1] max-w-[430px] mx-auto border-x-4 border-black relative overflow-hidden">
-        <header className="p-4 flex justify-between items-center border-b-4 border-black bg-white">
+      <div className="flex flex-col min-h-dvh bg-[#FFF9E1] max-w-[430px] mx-auto border-x-4 border-black relative overflow-hidden">
+        <header className="p-4 flex justify-between items-center border-b-4 border-black bg-white safe-pt">
           <Button color="pink" size="sm" onClick={() => setCurrentPage(Page.Home)}>🏠 首页</Button>
-          <div className="flex-1 text-center px-4"><h2 className="font-black text-lg truncate">《{story.title}》</h2></div>
+          <div className="flex-1 text-center px-4">
+            <h2 className="font-black text-lg truncate">《{story.title}》</h2>
+          </div>
           <div className="w-10"></div>
         </header>
-        <main className="flex-1 p-4 flex flex-col gap-4">
-          <div className="relative aspect-square w-full rounded-[2rem] border-4 border-black overflow-hidden bg-white neubrutalism-shadow">
-            <img key={currentScene.imageUrl} src={currentScene.imageUrl} className="w-full h-full object-cover animate-[fadeIn_0.5s_ease-out]" />
-            <div className="absolute bottom-4 right-4 bg-[#FFD93D] border-2 border-black px-4 py-1 rounded-full font-black text-sm">第 {activePage + 1} / {story.scenes.length} 页</div>
+
+        <main className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
+          <div className="relative aspect-square w-full rounded-[2rem] border-4 border-black overflow-hidden bg-white neubrutalism-shadow group shrink-0">
+            <img 
+              key={currentScene.imageUrl}
+              src={currentScene.imageUrl} 
+              className="w-full h-full object-cover animate-[fadeIn_0.5s_ease-out]" 
+              alt="Story page" 
+            />
+            <div className="absolute top-4 left-4 bg-white/90 border-2 border-black px-3 py-1 rounded-full text-[10px] font-black">
+              AI 画笔: 魔法风格
+            </div>
+            <div className="absolute bottom-4 right-4 bg-[#FFD93D] border-2 border-black px-4 py-1 rounded-full font-black text-sm">
+              第 {activePage + 1} 页
+            </div>
           </div>
+
           <div className="bg-white border-4 border-black rounded-[2rem] p-6 neubrutalism-shadow flex-1 relative min-h-[150px]">
-            <div className="absolute -top-3 left-6 px-4 py-1 bg-[#6EB5FF] border-2 border-black rounded-full text-xs font-black text-white">故事旁白</div>
-            <p className="text-xl font-bold leading-relaxed text-gray-800">{currentScene.narration}</p>
+            <div className="absolute -top-3 left-6 px-4 py-1 bg-[#6EB5FF] border-2 border-black rounded-full text-xs font-black text-white">
+              故事旁白
+            </div>
+            <p className="text-xl font-bold leading-relaxed text-gray-800">
+              {currentScene.narration}
+            </p>
           </div>
         </main>
-        <footer className="p-4 bg-white border-t-4 border-black flex gap-4 safe-area-bottom">
-          <Button color="white" className="flex-1" disabled={activePage === 0} onClick={() => setActivePage(p => p - 1)}>← 上一页</Button>
-          <Button color={activePage === story.scenes.length - 1 ? 'green' : 'yellow'} className="flex-1" onClick={() => activePage === story.scenes.length - 1 ? alert("魔法绘本读完啦！") : setActivePage(p => p + 1)}>
+
+        <footer className="p-4 bg-white border-t-4 border-black flex gap-4 safe-pb">
+          <Button 
+            color="white" 
+            className={`flex-1 ${activePage === 0 ? 'opacity-30' : ''}`} 
+            disabled={activePage === 0}
+            onClick={() => setActivePage(p => p - 1)}
+          >
+            ← 上一页
+          </Button>
+          <Button 
+            color={activePage === story.scenes.length - 1 ? 'green' : 'yellow'} 
+            className="flex-1"
+            onClick={() => {
+              if (activePage === story.scenes.length - 1) {
+                alert("你读完了整个故事！太棒了！🌈");
+              } else {
+                setActivePage(p => p + 1);
+              }
+            }}
+          >
             {activePage === story.scenes.length - 1 ? '读完了！✨' : '下一页 →'}
           </Button>
         </footer>
@@ -319,9 +317,17 @@ const App: React.FC = () => {
       {currentPage === Page.Record && renderRecord()}
       {currentPage === Page.Generate && renderGenerate()}
       {currentPage === Page.Result && renderResult()}
+      
       <style>{`
-        @keyframes loading { 0% { transform: scaleX(0); } 100% { transform: scaleX(1); } }
-        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes loading {
+          0% { transform: scaleX(0); }
+          50% { transform: scaleX(0.7); }
+          100% { transform: scaleX(1); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
       `}</style>
     </div>
   );

@@ -32,6 +32,8 @@
             -webkit-user-select: none;
             -webkit-tap-highlight-color: transparent;
             cursor: url('https://cdn-icons-png.flaticon.com/512/1043/1043514.png') 16 16, auto;
+            /* 防止 iOS 橡皮筋效果 */
+            overscroll-behavior-y: none;
         }
         .neubrutalism-shadow {
             box-shadow: 6px 6px 0px 0px rgba(0,0,0,1);
@@ -63,8 +65,17 @@
         .scrollbar-hide::-webkit-scrollbar {
             display: none;
         }
-        .safe-area-bottom {
-            padding-bottom: env(safe-area-inset-bottom);
+        /* 兼容性更好的安全区域处理 */
+        .safe-pt {
+            padding-top: max(1rem, env(safe-area-inset-top));
+        }
+        .safe-pb {
+            padding-bottom: max(1rem, env(safe-area-inset-bottom));
+        }
+        /* 动态视口高度，解决移动端地址栏遮挡问题 */
+        .min-h-dvh {
+            min-height: 100vh; /* Fallback */
+            min-height: 100dvh;
         }
         @keyframes spin-slow {
             from { transform: rotate(0deg); }
